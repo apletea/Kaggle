@@ -24,5 +24,4 @@ def main():
     test_data2['SexN'] = test_SexN[0]
     X = test_data2.loc[:, ['Pclass','SexN','Age','SibSp','Parch','Fare','Cabin']]
     res = clf.predict(X)
-    print(res)
 main()
