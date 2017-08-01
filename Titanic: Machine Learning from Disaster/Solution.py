@@ -30,11 +30,16 @@ def main():
 
     test_data = import_data('test.csv','PassengerId')
     test_to_let = test_data.loc[ : ,['Pclass', 'Fare', 'Age', 'Sex']]
-    SexN = data2.Sex.factorize()
-    data2.loc[:, 'SexN'] = SexN[0]
-    X = data2.loc[ :, ['Pclass', 'Fare' , 'Age', 'SexN']]
+    SexN = test_to_let.Sex.factorize()
+    test_to_let.loc[:, 'SexN'] = SexN[0]
+    X = test_to_let.loc[ :, ['Pclass', 'Fare' , 'Age', 'SexN']]
+    print(X)
+
     res = clf.predict(X)
-   
+    print(res)
+    print(len(res))
+    print(test_data['Fare'])
+
 main()
 
 

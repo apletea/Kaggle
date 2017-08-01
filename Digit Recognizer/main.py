@@ -1,62 +1,41 @@
+import tensorflow as tf
 import pandas as pd
-import numpy as np
-import matplotlib.pyplot as plt
-import pylab
-from keras.models import Sequential
-from keras.layers import Dense,Dropout,Lambda,Flatten
-from keras.optimizers import Adam,RMSprop
-from sklearn.model_selection import train_test_split
-from keras.models import  Sequential
-from keras.layers.core import  Lambda , Dense, Flatten, Dropout
-from keras.callbacks import EarlyStopping
-from keras.layers import BatchNormalization, Convolution2D , MaxPooling2D
-from subprocess import check_output
-from keras.preprocessing import image
-test = pd.read_csv('test.csv')
-train = pd.read_csv('train.csv')
+from tensorflow.examples.tutorials.mnist import input_data
+mnist = input_data.read_data_sets("MNIST_data/", one_hot=True)
 
-X_train = (train.ix[:,1:].values).astype('float32')
-Y_train = train.ix[:,0].values.astype('int32')
-X_test = test.values.astype('float32')
+x = tf.placeholder(tf.float32, [None, 784])
+W = tf.Variable(tf.zeros([784,10]))
+b = tf.Variable(tf.zeros([10]))
 
-X_train = X_train.reshape(X_train.shape[0],28,28)
+y = tf.nn.softmax(tf.matmul(x,W) + b)
 
-for i in range(6, 9):
-    plt.subplot(330 + (i+1))
-    plt.imshow(X_train[i], cmap=plt.get_cmap('gray'))
-    plt.title(Y_train[i])
+y_ = tf.placeholder(tf.float32, [None, 10])
 
-X_train = X_train.reshape(X_train.shape[0], 28, 28,1)
+cross_entropy = tf.reduce_mean(-tf.reduce_sum(y_ * tf.log(y), reduction_indices=[1]))
 
-X_test = X_test.reshape(X_test.shape[0], 28, 28,1)
+train_step = tf.train.GradientDescentOptimizer(0.05).minimize(cross_entropy)
 
-mean_px = X_train.mean().astype(np.float32)
-std_px = X_train.std().astype(np.float32)
-
-def standardize(x):
-    return (x-mean_px)/std_px
+sess = tf.InteractiveSession()
 
 
+tf.global_variables_initializer().run()
 
+for _ in range(1000):
+  batch_xs, batch_ys = mnist.train.next_batch(100)
+  sess.run(train_step, feed_dict={x: batch_xs, y_: batch_ys})
 
-from keras.utils.np_utils import to_categorical
-y_train= to_categorical(Y_train)
-num_classes = y_train.shape[1]
+correct_prediction = tf.equal(tf.argmax(y, 1), tf.argmax(y_, 1))
 
-plt.title(y_train[9])
-plt.plot(y_train[9])
-plt.xticks(range(10))
+accuracy = tf.reduce_mean(tf.cast(correct_prediction, tf.float32))
 
-seed = 43
-np.random.seed(seed)
+print(sess.run(accuracy, feed_dict={x: mnist.test.images, y_: mnist.test.labels}))
 
-pylab.show()
+tess_y = pd.read_csv('test.csv')
 
-model=Sequential()
-model.add(Lambda(standardize,input_shape=(28,28,1)))
-model.add(Flatten())
-model.add(Dense(10,activation='softmax'))
-model.compile(optimizer=RMSprop(lr=0.001),loss='categorical_crossentropy',metrics=['accuracy'])
-
-gen = image.ImageDataGenerator()
-
+  #results=clf.predict(test_data[0:5000])
+#df = pd.DataFrame(results)
+#df.index.name='ImageId'
+#df.index+=1
+#df.columns=['Label']
+#df.to_csv('results.csv', header=True)
+#
