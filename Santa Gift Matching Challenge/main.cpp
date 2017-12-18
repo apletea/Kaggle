@@ -42,7 +42,7 @@ int main() {
     long long score = getScore(state, scoreMatrix);
 
     for (int round = 1; round <= N_ROUNDS; round++) {
-        for(int child = 4000; child < N_CHILDREN; child++) {
+        for(int child = 1; child < N_CHILDREN; child++) {
             int childGift = state[child];
             for (int i = 0; i < N_CANDIDATES_PER_GIFT && candidatesMatrix[childGift][i] != -1; i++) {
                 int candidate = candidatesMatrix[childGift][i];
