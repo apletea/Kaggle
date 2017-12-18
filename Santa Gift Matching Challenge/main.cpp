@@ -2,7 +2,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-
+#include <iostream>
 #define true 1
 #define false 0
 
@@ -14,7 +14,7 @@ const unsigned int N_TWINS = 4000;
 
 // 19711 is the maximum number of children that wish the same gift
 const unsigned int N_CANDIDATES_PER_GIFT = 1000 + 19711;
-const unsigned int N_ROUNDS = 3;
+const unsigned int N_ROUNDS = 1000;
 
 int **parseCsvFile(const char *path, int nRows, int nColumns, bool hasHeader, bool skipFirstColumn);
 
@@ -30,11 +30,11 @@ long long getScore(const int *solution, const int **scoreMatrix);
 
 int main() {
 
-    const int **const giftPref = (const int **const) parseCsvFile("/home/davinci/kaggle_santa/child_wishlist.csv", N_CHILDREN,
+    const int **const giftPref = (const int **const) parseCsvFile("/home/davinci/kagle/child_wishlist.csv", N_CHILDREN,
                                                                   N_GIFT_PREF + 1, false, true);
-    const int **const childPref = (const int **const) parseCsvFile("/home/davinci/kaggle_santa/gift_goodkids.csv", N_GIFT_TYPE,
+    const int **const childPref = (const int **const) parseCsvFile("/home/davinci/kagle/gift_goodkids.csv", N_GIFT_TYPE,
                                                                    N_CHILD_PREF + 1, false, true);
-    int *state = parseSolution("/home/davinci/kaggle_santa/submission.csv");
+    int *state = parseSolution("/home/davinci/build-kagle-Desktop_Qt_5_7_0_GCC_64bit-Debug/c_sub.csv");
 
     const int **const scoreMatrix = (const int **const) getScoreMatrix(giftPref, childPref);
     const int **const candidatesMatrix = (const int **const) getCandidatesMatrix(giftPref, childPref);
@@ -42,48 +42,115 @@ int main() {
     long long score = getScore(state, scoreMatrix);
 
     for (int round = 1; round <= N_ROUNDS; round++) {
-        for(int child = 1; child < N_CHILDREN; child++) {
+        for(int child = 0; child < 40000; child+=2) {
             int childGift = state[child];
-            for (int i = 0; i < N_CANDIDATES_PER_GIFT && candidatesMatrix[childGift][i] != -1; i++) {
-                int candidate = candidatesMatrix[childGift][i];
+            for (int i = 1; i < N_CANDIDATES_PER_GIFT && candidatesMatrix[childGift][i] != -1; i++) {
+                for (int j = 0; j < i; j++)
+                {
+                    int candidate = candidatesMatrix[childGift][i];
+                    int candidate_2 = candidatesMatrix[childGift][j];
+                    // Don't swap with twins
+                    if (candidate < N_TWINS) continue;
+                    if (candidate_2 < N_TWINS) continue;
 
-                // Don't swap with twins
-                if (candidate < N_TWINS) continue;
+                    int candidateGift = state[candidate];
+                    int candidate2Gift = state[candidate_2];
+                    if (candidateGift != candidate2Gift) continue;
+                    // Calculate the score change
+                    int scoreChange = 0;
 
-                int candidateGift = state[candidate];
+                    scoreChange -= scoreMatrix[childGift][child];
+                    scoreChange -= scoreMatrix[candidateGift][candidate];
+                    scoreChange += scoreMatrix[candidateGift][child];
+                    scoreChange += scoreMatrix[childGift][candidate];
 
-                // Calculate the score change
-                int scoreChange = 0;
-                scoreChange -= scoreMatrix[childGift][child];
-                scoreChange -= scoreMatrix[candidateGift][candidate];
-                scoreChange += scoreMatrix[candidateGift][child];
-                scoreChange += scoreMatrix[childGift][candidate];
 
-                if (scoreChange > 0) {
-                    // Swap it!
-                    state[candidate] = childGift;
-                    state[child] = candidateGift;
-                    score += scoreChange;
+                    scoreChange -= scoreMatrix[childGift][child+1];
+                    scoreChange -= scoreMatrix[candidateGift][candidate_2];
+                    scoreChange += scoreMatrix[candidateGift][child+1];
+                    scoreChange += scoreMatrix[childGift][candidate_2];
 
-                    // Try the next child
-                    break;
+                    if (scoreChange > 0) {
+                        // Swap it!
+                        state[candidate] = childGift;
+                        state[child] = candidateGift;
+                        score += scoreChange;
+
+                        state[candidate_2] = childGift;
+                        state[child+1] = candidateGift;
+                        score += scoreChange;
+
+                        std::cout << "[--LOG--:: child =" << child << std::endl;
+                        std::cout << "[--LOG--:: candidate_1 =" << candidate << std::endl;
+                        std::cout << "[--LOG--:: candidate_2 =" << candidate_2 << std::endl;
+
+
+                        // Try the next child
+                        break;
+                    }
                 }
             }
 
-            if (child % 100000 == 0) {
-                printf("Round: %d, Child: %d, Score: %lld \\n", round, child, score);
+            if (child % 10000 == 0) {
+                printf("Round: %d, Child: %d, Score: %lld \n", round, child, score);
             }
         }
 
         // Print the average normalized happiness
         score = getScore(state, scoreMatrix);
         float anh = ((float) score) / 2000000000;
-        printf("Round: %d finished, Average Normalized Happiness %.9g\\n", round, anh);
+        printf("Round: %d finished, Average Normalized Happiness %.9g \n", round, anh);
 
         // Save to csv
-        printf("Saved to CSV file\\n");
+        printf("Saved to CSV file \n");
         saveToCsv(state, "c_sub.csv");
     }
+    //    for (int round = 1; round <= N_ROUNDS; round++) {
+    //        for(int child = 40000; child < N_CHILDREN; child++) {
+    //            int childGift = state[child];
+    //            for (int i = 0; i < N_CANDIDATES_PER_GIFT && candidatesMatrix[childGift][i] != -1; i++) {
+    //                int candidate = candidatesMatrix[childGift][i];
+    //                // Don't swap with twins
+    //                if (candidate < N_TWINS) continue;
+
+    //                int candidateGift = state[candidate];
+
+    //                // Calculate the score change
+    //                int scoreChange = 0;
+    //                scoreChange -= scoreMatrix[childGift][child];
+    //                scoreChange -= scoreMatrix[candidateGift][candidate];
+    //                scoreChange += scoreMatrix[candidateGift][child];
+    //                scoreChange += scoreMatrix[childGift][candidate];
+
+    //                if (scoreChange > 0) {
+    //                    // Swap it!
+    //                    state[candidate] = childGift;
+    //                    state[child] = candidateGift;
+    //                    score += scoreChange;
+
+    //                    std::cout << "[--LOG--:: child =" << child << std::endl;
+    //                    std::cout << "[--LOG--:: candidate =" << candidate << std::endl;
+
+
+    //                    // Try the next child
+    //                    break;
+    //                }
+    //            }
+
+    //            if (child % 100000 == 0) {
+    //                printf("Round: %d, Child: %d, Score: %lld \n", round, child, score);
+    //            }
+    //        }
+
+    //        // Print the average normalized happiness
+    //        score = getScore(state, scoreMatrix);
+    //        float anh = ((float) score) / 2000000000;
+    //        printf("Round: %d finished, Average Normalized Happiness %.9g \n", round, anh);
+
+    //        // Save to csv
+    //        printf("Saved to CSV file \n");
+    //        saveToCsv(state, "c_sub.csv");
+    //    }
 }
 
 int **getCandidatesMatrix(const int **giftPref, const int **childPref) {
@@ -176,13 +243,13 @@ int *parseSolution(const char *path) {
 void saveToCsv(const int *state, const char *path) {
     FILE *f = fopen(path, "w");
     if (f == NULL) {
-        fprintf(stderr, "Could not open csv file %s\\n", path);
+        fprintf(stderr, "Could not open csv file %s\n", path);
         return;
     }
 
-    fprintf(f, "ChildId,GiftId\\n");
+    fprintf(f, "ChildId,GiftId\n");
     for (int child = 0; child < N_CHILDREN; child++) {
-        fprintf(f, "%d,%d\\n", child, state[child]);
+        fprintf(f, "%d,%d \n", child, state[child]);
     }
     fclose(f);
 }
@@ -216,14 +283,13 @@ int **parseCsvFile(const char *path, int nRows, int nColumns, bool hasHeader, bo
                 if (token) {
                     if (resultColumn >= 0) result[row][resultColumn] = atoi(token);
                 } else {
-                    fprintf(stderr, "Could not read line %d, token %d from file %s\\n", row, column, path);
+                    fprintf(stderr, "Could not read line %d, token %d from file %s\n", row, column, path);
                 }
             }
         } else {
-            fprintf(stderr, "Could not read line %d from file %s\\n", row, path);
+            fprintf(stderr, "Could not read line %d from file %s\n", row, path);
         }
     }
     return result;
 }
-
 
