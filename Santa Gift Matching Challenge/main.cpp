@@ -78,7 +78,6 @@ int main() {
 
                         state[candidate_2] = childGift;
                         state[child+1] = candidateGift;
-                        score += scoreChange;
 
                         std::cout << "[--LOG--:: child =" << child << std::endl;
                         std::cout << "[--LOG--:: candidate_1 =" << candidate << std::endl;
