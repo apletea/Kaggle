@@ -41,7 +41,7 @@ int main() {
 
     long long score = getScore(state, scoreMatrix);
 
-    for (int round = 1; round <= N_ROUNDS; round++) {
+    for (int round = 0; round <= N_ROUNDS; round++) {
         for(int child = 0; child < 40000; child+=2) {
             int childGift = state[child];
             for (int i = 1; i < N_CANDIDATES_PER_GIFT && candidatesMatrix[childGift][i] != -1; i++) {
@@ -71,7 +71,6 @@ int main() {
                     scoreChange += scoreMatrix[childGift][candidate_2];
 
                     if (scoreChange > 0) {
-                        // Swap it!
                         state[candidate] = childGift;
                         state[child] = candidateGift;
                         score += scoreChange;
