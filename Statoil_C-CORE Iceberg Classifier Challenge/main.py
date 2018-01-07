@@ -92,25 +92,43 @@ data = pd.read_json('train.json')
 print len(data)
 X = []
 y = []
+X_band_1=np.array([np.array(band).astype(np.float32).reshape(75, 75) for band in data["band_1"]])
+X_band_2=np.array([np.array(band).astype(np.float32).reshape(75, 75) for band in data["band_2"]])
+xder = np.array([[-1,0,1],[-2,0,2],[-1,0,1]])
+yder = np.array([[1,2,1],[0,0,0],[-1,-2,-1]])
+X_band_3 = (X_band_1 + X_band_2)/2
+for i in xrange(0,len(X_band_1)):
+    arrx = signal.convolve2d((X_band_1[i]), xder, mode='valid')
+    arry = signal.convolve2d((X_band_2[i]), yder, mode='valid')
+
+    plt.imshow(np.hypot(arrx,arry),cmap='inferno')
+    mat = (np.hypot(arrx,arry))
+    mat = cv2.copyMakeBorder(mat,1,1,1,1,cv2.BORDER_CONSTANT)
+    X_band_3[i] = mat
+
+
+imgs =  np.concatenate([X_band_1[:, :, :, np.newaxis]
+                          , X_band_2[:, :, :, np.newaxis]
+                         , X_band_3[:, :, :, np.newaxis]], axis=-1)
+
 data.inc_angle = data.inc_angle.apply(lambda x: -1 if x == 'na' else x)
 for i in xrange(0,len(data)):
-    img = cv2.imread('./band_res/{}.jpg'.format(data.id[i]))
+    img = imgs[i]
     if data.inc_angle[i] != -1:
         X.append(img)
         y.append(data.is_iceberg[i])
-print y
 y = np.transpose(y,axes=-1)
-print y
+
 model = Sequential()
-model.add(Convolution2D(50,11,4,input_shape=(75,75,3)))
+model.add(Convolution2D(10,11,4,input_shape=(75,75,3)))
 model.add(Activation('relu'))
-model.add(MaxPooling2D((3,3),2))
-model.add(Convolution2D(100,5,1))
+model.add(Convolution2D(20,7,1))
 model.add(Activation('relu'))
-model.add(MaxPooling2D((3,3),2))
-model.add(Convolution2D(200,3,1))
+model.add(Convolution2D(30,5,1))
 model.add(Activation('relu'))
-model.add(MaxPooling2D((3,3),2))
+model.add(Convolution2D(40,3,1))
+model.add(Activation('relu'))
+model.add(MaxPooling2D((10,10),5))
 model.add(Dropout(0.5))
 model.add(Flatten())
 model.add(Dense(100))
