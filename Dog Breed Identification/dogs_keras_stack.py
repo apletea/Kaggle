@@ -17,7 +17,8 @@ from keras.optimizers import *
 from keras.regularizers import *
 from keras.applications.inception_v3 import preprocess_input
 from keras.callbacks import ModelCheckpoint
-from sklearn import svm
+from sklearn.model_selection import StratifiedKFold
+
 
 def augment_brightness_camera_images(image):
     image1 = cv2.cvtColor(image,cv2.COLOR_RGB2HSV)
@@ -80,6 +81,15 @@ def augment(img):
         ans.append(imgc)
     return ans
 
+# def MultiLogLoss(y_pred, y_true):
+
+def multiclass_loss(y_true, y_pred):
+    '''
+    Our custom multiclass loss function
+    '''
+    EPS = 1e-5
+    y_pred = K.clip(y_pred, EPS, 1 - EPS)
+    return -K.mean((1 - y_true) * K.log(1 - y_pred) + y_true * K.log(y_pred))
 
 df_train =pandas.read_csv('labels.csv')
 
@@ -91,7 +101,7 @@ one_hot = pandas.get_dummies(target_series, sparse=True)
 
 one_hot_labels = np.asarray(one_hot)
 
-im_size = 224
+im_size = 250
 x_train = []
 y_train = []
 
@@ -155,26 +165,45 @@ def get_features(MODEL, data):
 #               metrics=['accuracy'])
 # h = model.fit(features,y_train_raw,batch_size=128,nb_epoch=10,validation_split=0.1)
 
-base = VGG19(include_top=False,weights='imagenet',input_shape=(224,224,3))
-x = base.output
-x = Dropout(0.5)(x)
-x = Flatten()(x)
-x = Dense(1000,activation='selu')(x)
-x = Dropout(0.5)(x)
-x = Dense(num_class,activation='softmax')(x)
 
-model = Model(inputs=base.inputs,outputs=x)
-for layer in base.layers:
-    layer.trainable = False
 
-model.compile(loss='binary_crossentropy',optimizer='adam')
-for j in xrange(0,10):
-    checkpointer = ModelCheckpoint(filepath='./tmp/weights.hdf5', verbose=1, save_best_only=True)
-    model.fit(x_train_raw,y_train_raw,nb_epoch=100,validation_split=0.1, callbacks=[checkpointer])
+skf = StratifiedKFold(n_splits=10,shuffle=True)
+cvscores = []
+for index, (train_indices, val_indices) in enumerate(skf.split(x_train_raw,y_train_raw)):
+    print "Training on fold " + str(index+1) + "/10..."
+
+    xtrain, xval = x_train_raw[train_indices],x_train_raw[val_indices]
+    ytrain, yval = y_train_raw[train_indices],y_train_raw[val_indices]
+
+    base = VGG19(include_top=False, weights='imagenet', input_shape=(im_size, im_size, 3))
+    x = base.output
+    x = Dropout(0.5)(x)
+    x = Flatten()(x)
+    x = Dense(1000, activation='selu')(x)
+    x = Dropout(0.5)(x)
+    x = Dense(num_class, activation='softmax')(x)
+    model = Model(inputs=base.inputs,outputs=x)
+
+    for layer in base.layers:
+        layer.trainable = False
+
+    model.compile(loss=multiclass_loss, optimizer='adam')
+    checkpointer = ModelCheckpoint(filepath='./tmp/weights_{}.hdf5'.format(index), verbose=1, save_best_only=True)
+
+    model.fit(x_train_raw,y_train_raw,epochs=30,callbacks=[checkpointer])
+
+    scores = model.evaluate(xval,yval)
+    print("%s: %.2f%%" % (model.metrics_names[1], scores[1] * 100))
+    cvscores.append(scores[1] * 100)
+    
+print("%.2f%% (+/- %.2f%%)" % (np.mean(cvscores), np.std(cvscores)))
+
+
 
 model.save('orig.h5')
 
-model = load_model('orig.h5')
+model.load_weights('./tmp/weights.hdf5')
+# model = load_model('orig.h5', custom_objects={"multiclass_loss":multiclass_loss})
 
 
 preds = model.predict(x_test,verbose=1)
