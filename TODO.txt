@@ -1,0 +1,3 @@
+https://challenge2018.isic-archive.com/
+https://www.kaggle.com/c/youtube8m-2018
+https://www.kaggle.com/c/home-credit-default-risk
