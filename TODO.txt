@@ -4,3 +4,4 @@ https://www.kaggle.com/c/home-credit-default-risk
 https://2018.ieeeicip.org/VIPCup.asp
 https://www.kaggle.com/c/google-ai-open-images-object-detection-track
 http://vast.uccs.edu/Opensetface/
+http://www.wider-challenge.org/
