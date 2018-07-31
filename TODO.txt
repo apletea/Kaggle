@@ -6,3 +6,4 @@ http://vast.uccs.edu/Opensetface/
 http://www.wider-challenge.org/
 https://prip.bsuir.by/registration-fee
 https://www.kaggle.com/martinpiotte/whale-recognition-model-with-score-0-78563
+https://www.kaggle.com/c/airbus-ship-detection/data
