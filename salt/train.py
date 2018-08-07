@@ -3,9 +3,8 @@ import numpy as np
 import random
 import skimage
 from skimage import data
-from sklearn.model_selection import train_test_split
+#from sklearn.model_selection import train_test_split
 import pandas as pd
-from matplotlib import pyplot as plt
 import os
 import glob
 import tensorflow as tf
@@ -28,8 +27,8 @@ from keras.callbacks import ModelCheckpoint , EarlyStopping, ReduceLROnPlateau, 
 from keras.utils.np_utils import to_categorical
 from keras import backend as K
 from keras.models import load_model
-from sklearn.metrics import roc_curve, auc, average_precision_score, precision_recall_curve
-from sklearn.utils import class_weight
+#from sklearn.metrics import roc_curve, auc, average_precision_score, precision_recall_curve
+#from sklearn.utils import class_weight
 from keras.models import *
 from keras.optimizers import *
 from keras.applications import *
@@ -38,12 +37,17 @@ from keras.utils import plot_model
 
 TRAIN_FOLDER = './train/'
 TEST_FOLDER = './test/'
-NAME_MODEL = 'Dense_201_gpu'
+NAME_MODEL = 'Unet_w_gpu'
+
+
+depths = pd.read_csv('depths.csv', index_col='id')
+
+
 
 
 def focal_loss_fixed(y_true, y_pred):
-  gamma=2.0
-  alpha=0.25
+  gamma=5.0
+  alpha=0.75
   pt_1 = tf.where(tf.equal(y_true, 1), y_pred, tf.ones_like(y_pred))
   pt_0 = tf.where(tf.equal(y_true, 0), y_pred, tf.zeros_like(y_pred))
   return -K.sum(alpha * K.pow(1. - pt_1, gamma) * K.log(pt_1))-K.sum((1-alpha) * K.pow( pt_0, gamma) * K.log(1. - pt_0))
@@ -63,11 +67,37 @@ def jacard_coef(y_true, y_pred):
 
 
 def jacard_coef_loss(y_true, y_pred):
-  return -jacard_coef(y_true, y_pred)
+  return 1-jacard_coef(y_true, y_pred)
 
 
 def dice_coef_loss(y_true, y_pred):
-  return -dice_coef(y_true, y_pred)
+  return 1-dice_coef(y_true, y_pred)
+
+
+def dice_coef_loss_bce(y_true, y_pred, dice=0.5, bce=0.5):
+  return binary_crossentropy(y_true, y_pred) * bce + dice_coef_loss(y_true, y_pred) * dice
+
+
+def binary_crossentropy(y, p):
+  return K.mean(K.binary_crossentropy(y, p))
+
+
+def double_head_loss(y_true, y_pred):
+  mask_loss = dice_coef_loss_bce(y_true[..., 0], y_pred[..., 0])
+  contour_loss = dice_coef_loss_bce(y_true[..., 1], y_pred[..., 1])
+  return mask_loss + contour_loss
+
+
+def mask_contour_mask_loss(y_true, y_pred):
+  mask_loss = dice_coef_loss_bce(y_true[..., 0], y_pred[..., 0])
+  contour_loss = dice_coef_loss_bce(y_true[..., 1], y_pred[..., 1])
+  full_mask = dice_coef_loss_bce(y_true[..., 2], y_pred[..., 2])
+  return mask_loss + 2 * contour_loss + full_mask
+
+
+def softmax_dice_loss(y_true, y_pred):
+  return categorical_crossentropy(y_true, y_pred) * 0.6 + dice_coef_loss(y_true[..., 0], y_pred[..., 0]) * 0.2 + dice_coef_loss(y_true[..., 1], y_pred[..., 1]) * 0.2
+
 
 
 def double_conv_layer(x, size, dropout, batch_norm):
@@ -93,6 +123,8 @@ def double_conv_conc(x, size, dropout, batch_norm):
   conv = Convolution2D(size, (3, 3), padding='same')(conv)  
 
 def MiddleFlow(input, num_output):
+  a = Convolution2D(num_output, 1, activation='relu', padding='same')(input)
+  a = BatchNormalization()(a)
   a = SeparableConv2D(num_output, 3, activation='relu', padding='same')(input)
   a = BatchNormalization()(a)
   a = SeparableConv2D(num_output, 3, activation='relu', padding='same')(input)
@@ -122,53 +154,82 @@ def get_model(input_shape=(112,112,3)):
   dropout = False
   batch_norm = True
   img_input = Input(shape=input_shape)
+  depth_input = Input(shape=(1,1,1))
 
   conv112 = double_conv_layer(img_input, filters, dropout, batch_norm)
 
   pool56 = EntryFlow(conv112, filters*2)
   conv56 = MiddleFlow(pool56, filters*2)
-  conv56 = MiddleFlow(conv56, filters*2)
-  conv56 = MiddleFlow(conv56, filters*2)  
+  tmp = Concatenate()([conv56,pool56])
+  conv56_1 = MiddleFlow(tmp, filters*2)
+  tmp = Concatenate()([conv56_1,conv56,pool56])
+  conv56_2 = MiddleFlow(tmp, filters*2)  
+  tmp =  Concatenate()([conv56_2,conv56_1,conv56,pool56])
 
-  pool28 = EntryFlow(conv56,  filters*4)
+  pool28 = EntryFlow(tmp,  filters*4)
   conv28 = MiddleFlow(pool28, filters*4)
-  conv28 = MiddleFlow(conv28, filters*4) 
-  conv28 = MiddleFlow(conv28, filters*4) 
+  tmp = Concatenate()([conv28,pool28])
+  conv28_1 = MiddleFlow(tmp, filters*4) 
+  tmp = Concatenate()([conv28_1,conv28,pool28])
+  conv28_2 = MiddleFlow(tmp, filters*4) 
+  tmp =  Concatenate()([conv28_2,conv28_1,conv28,pool28])
 
-  pool14 = EntryFlow(conv28,  filters*8)
+  pool14 = EntryFlow(tmp,  filters*8)
   conv14 = MiddleFlow(pool14, filters*8)
-  conv14 = MiddleFlow(conv14, filters*8) 
-  conv14 = MiddleFlow(conv14, filters*8) 
+  tmp = Concatenate()([conv14,pool14])
+  conv14_1 = MiddleFlow(tmp, filters*8)
+  tmp = Concatenate()([conv14_1,conv14,pool14])
+  conv14_2 = MiddleFlow(tmp, filters*8) 
+  tmp =  Concatenate()([conv14_2,conv14_1,conv14,pool14])
 
-  pool7 = EntryFlow(conv14,   filters*16)
-  conv7 = MiddleFlow(pool7, filters*16) 
-  conv7 = MiddleFlow(conv7, filters*16) 
-  conv7 = MiddleFlow(conv7, filters*16)
-
-  up14 = concatenate([UpSampling2D(size=(2, 2))(conv7), conv14], axis=-1)
-  up14 = Convolution2D(filters*8, (1, 1), activation='relu')(up14)
-  conv14 = MiddleFlow(up14, filters*8)
-  conv14 = MiddleFlow(conv14, filters*8) 
-  conv14 = MiddleFlow(conv14, filters*8)
-
-  up28 = concatenate([UpSampling2D(size=(2, 2))(conv14), conv28], axis=-1)
-  up28 = Convolution2D(filters*4, (1, 1), activation='relu')(up28)
-  conv28 = MiddleFlow(up28, filters*4)
-  conv28 = MiddleFlow(conv28, filters*4) 
-  conv28 = MiddleFlow(conv28, filters*4) 
-
-  up56 = concatenate([UpSampling2D(size=(2, 2))(conv28), conv56], axis=-1)
-  up56 = Convolution2D(filters*2, (1, 1), activation='relu')(up56)
-  conv56 = MiddleFlow(up56, filters*2)
-  conv56 = MiddleFlow(conv56, filters*2)
-  conv56 = MiddleFlow(conv56, filters*2) 
-
-  up112 = concatenate([UpSampling2D(size=(2, 2))(conv56), conv112], axis=-1)
-  conv112 = Convolution2D(1, (1, 1), activation='sigmoid')(up112)
   
-  model = Model(img_input,conv112)
+  pool7 = EntryFlow(tmp,   filters*16)
+  conv7 = MiddleFlow(pool7, filters*16) 
+  tmp = Concatenate()([conv7,pool7])
+  conv7_1 = MiddleFlow(tmp, filters*16) 
+  tmp = Concatenate()([conv7_1,conv7,pool7])
+  conv7_2 = MiddleFlow(tmp, filters*16)
+  tmp =  Concatenate()([conv7_2,conv7_1,conv7,pool7])
+
+  up14 = concatenate([UpSampling2D(size=(2, 2))(tmp), conv14], axis=-1)
+  conv14_3 = MiddleFlow(up14, filters*8)
+  tmp =  Concatenate()([conv14_3,conv14_2])
+  conv14_4 = MiddleFlow(tmp, filters*8) 
+  tmp =  Concatenate()([conv14_4,conv14_1])
+  conv14_5 = MiddleFlow(tmp, filters*8)
+  tmp =  Concatenate()([conv14_5,conv14])
+
+  up28 = concatenate([UpSampling2D(size=(2, 2))(tmp), conv28], axis=-1)
+  conv28_3 = MiddleFlow(up28, filters*4)
+  tmp =  Concatenate()([conv28_3,conv28_2])
+  conv28_4 = MiddleFlow(tmp, filters*4) 
+  tmp =  Concatenate()([conv28_4,conv28_1])
+  conv28_5 = MiddleFlow(tmp, filters*4) 
+  tmp =  Concatenate()([conv28_5,conv28])
+
+  up56 = concatenate([UpSampling2D(size=(2, 2))(tmp), conv56], axis=-1)
+  conv56_3 = MiddleFlow(up56, filters*2)
+  tmp =  Concatenate()([conv56_3,conv56_2])
+  conv56_4 = MiddleFlow(tmp, filters*2)
+  tmp =  Concatenate()([conv56_4,conv56_1])
+  conv56_5 = MiddleFlow(tmp, filters*2) 
+  tmp =  Concatenate()([conv56_5,conv56])
+
+  up112 = concatenate([UpSampling2D(size=(2, 2))(tmp), conv112], axis=-1)
+  conv112_1 = MiddleFlow(up112, filters)
+  tmp = Concatenate()([conv112_1,conv112])
+  conv112 = Convolution2D(1, (1, 1))(up112)
+
+  #losses
+  dice_co = Activation('sigmoid')(conv112)
+  jacard_co = Activation('sigmoid')(conv112)
+  entropy = Activation('sigmoid')(conv112)
+ # focal = Activation('sigmoid')(conv112)
+ # model = Model(img_input,conv112)
+   
+  model = Model(img_input,[dice_co,jacard_co,entropy])
   #model.compile(optimizer='adam', loss=focal_loss_fixed, metrics=['accuracy',dice_coef])
-  model.compile(optimizer='adam', loss=dice_coef_loss, metrics=['accuracy',dice_coef])
+  model.compile(optimizer='adam', loss=[dice_coef_loss,jacard_coef_loss,'binary_crossentropy'],loss_weights=[1,1,1], metrics=['accuracy',dice_coef])
   return model
 
 def padd_image(image, mask):
@@ -181,14 +242,23 @@ def padd_image(image, mask):
 def get_train():
   X = []
   Y = []
+  i = 0
   for image in os.listdir(TRAIN_FOLDER + 'images'):
     img = padd_image(cv2.imread(TRAIN_FOLDER + 'images/{}'.format(image)),False)
     mask = padd_image(cv2.imread(TRAIN_FOLDER + 'masks/{}'.format(image)),True)
     X.append(img)
     Y.append(mask)
+    img = np.fliplr(img)
+    mask = np.fliplr(mask)
+    X.append(img)
+    Y.append(mask)
+    blur = cv2.blur(img,(5,5))
+    X.append(blur)
+    Y.append(mask)
+    i+=1
   X = np.array(X, np.float32) / 255
   Y = np.array(Y, np.float32) / 255
-  return X,Y
+  return  X,Y
    
 
 def get_test():
@@ -213,5 +283,7 @@ model = get_model()
 #model = load_model('models/{}.h5'.format(NAME_MODEL))
 print (model.summary())
 plot_model(model, 'dragon.png')
-model.fit(X,Y[:,:,:,:1], epochs=100, validation_split=0.1, callbacks=callbacks)
+model.fit(X,[Y[:,:,:,:1],Y[:,:,:,:1],Y[:,:,:,:1]], epochs=100, validation_split=0.05, callbacks=callbacks)
 model.save('models/{}.h5'.format(NAME_MODEL))
+model_k = Model(model.input, model.output[0])
+model_k.save('models/inference_best.h5')
