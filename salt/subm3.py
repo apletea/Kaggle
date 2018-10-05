@@ -22,7 +22,7 @@ from keras.regularizers import *
 from keras.callbacks import ModelCheckpoint
 from keras import backend as K
 from keras.models import load_model
-from keras.utils import plot_model
+
 from keras.callbacks import ModelCheckpoint , EarlyStopping, ReduceLROnPlateau, TensorBoard
 from keras.utils.np_utils import to_categorical
 from keras import backend as K
@@ -34,7 +34,7 @@ from keras.optimizers import *
 from keras.applications import *
 import telegram
 from keras.callbacks import Callback
-from keras.utils import plot_model
+
 
 version = 5
 basic_name = 'Unet_resnet_v{}'.format(str(version))
@@ -359,7 +359,6 @@ Lovasz-Softmax and Jaccard hinge loss in Tensorflow
 Maxim Berman 2018 ESAT-PSI KU Leuven (MIT License)
 """
 
-from __future__ import print_function, division
 
 import tensorflow as tf
 import numpy as np
@@ -535,6 +534,13 @@ def get_data(word, df):
         a[i] = upsample(tmp)
     return data
 
+def lovasz_loss(y_true, y_pred):
+    y_true, y_pred = K.cast(K.squeeze(y_true, -1), 'int32'), K.cast(K.squeeze(y_pred, -1), 'float32')
+    #logits = K.log(y_pred / (1. - y_pred))
+    logits = y_pred #Jiaxin
+    loss = lovasz_hinge(logits, y_true, per_image = True, ignore = None)
+    return loss
+
 
 
 X_train = np.array([upsample(cv2.imread('train/images/{}'.format(name))) for name in train_df[0]],np.float32) / 255
@@ -558,24 +564,76 @@ batch_size = 64
 X_train_splitted = np.array(np.array_split(X_train, 5))
 y_train_splitted = np.array(np.array_split(Y_train, 5))
 
+def get_model():
+    input_layer = Input((net_size, net_size, 1))
+    output_layer = build_model(input_layer, 16,0.5)
+    return Model(input_layer,output_layer)
 
 
-models =[]
-MODEL_NAME = 'FOLDS_resnet34'
-from keras import optimizers
-for i in range(5):
-    model = load_model('folds_s/{}.h5'.format(str(i) + '_' +MODEL_NAME),custom_objects={'my_iou_metric': my_iou_metric})
-    models.append(model)
-    models[i].compile(loss=weighted_bce_dice_loss, optimizer='adam', metrics=[my_iou_metric])
 
 epochs = 130
 batch_size = 60
 
 
+
+
 X_train_splitted = np.array(np.array_split(X_train, 5))
 y_train_splitted = np.array(np.array_split(Y_train, 5))
+
+def get_model():
+    input_layer = Input((net_size, net_size, 1))
+    output_layer = build_model(input_layer, 16,0.5)
+    return Model(input_layer,output_layer)
     
-for i in range(2,5):
+models = [get_model() for i in range(5)]
+model1 = models[0]
+MODEL_NAME = 'FOLDS_resnet34'
+#c = optimizers.adam(lr = 0.001)
+for model in models:
+    model.compile(loss="binary_crossentropy", optimizer='adam', metrics=[my_iou_metric])
+    
+MODEL_NAME = 'FOLDS_resnet34'
+epochs = 35
+batch_size = 64
+
+X_train_splitted = np.array(np.array_split(X_train, 5))
+y_train_splitted = np.array(np.array_split(Y_train, 5))
+
+for i in range(5):
+    
+    train_x         =  X_train_splitted[(np.arange(5)!=i)].reshape((4*1440,128,128,3))
+    train_y         =  y_train_splitted[(np.arange(5)!=i)].reshape((4*1440,128,128,3))
+    val_x,val_y     = X_train_splitted[i],y_train_splitted[i]
+    
+    
+    callbacks = [
+             ModelCheckpoint(monitor=' val_my_iou_metric',
+                             filepath='weights/' + str(i) + '_' + MODEL_NAME,
+                             save_best_only=True,
+                             save_weights_only=True),
+            LRTensorBoard(log_dir='./logs/{}'.format(str(i) + '_' +MODEL_NAME)),
+            SGDRScheduler(min_lr=1e-6,
+                                     max_lr=1e-3,
+                                     steps_per_epoch=np.ceil(float(4*1440) / float(batch_size)),
+                                     lr_decay=0.9,
+                                     cycle_length=10,
+                                     mult_factor=1.5)
+            ]
+    
+    model = models[i]
+
+    
+    model.fit(train_x[:,:,:,:1],train_y[:,:,:,:1],validation_data=[val_x[:,:,:,:1], val_y[:,:,:,:1]], epochs=epochs, batch_size=batch_size, callbacks=callbacks)
+    model.save('folds_s/{}.h5'.format(str(i) + '_' +MODEL_NAME))
+    
+
+MODEL_NAME = 'FOLDS_resnet34'
+from keras import optimizers
+for i in range(5):
+    models[i] = Model(models[i].layers[0].input, models[i].layers[-1].input)
+    models[i].compile(loss=lovasz_loss, optimizer='adam', metrics=[my_iou_metric_2])
+
+for i in range(5):
     
     train_x         =  X_train_splitted[(np.arange(5)!=i)].reshape((4*1440,128,128,3))
     train_y         =  y_train_splitted[(np.arange(5)!=i)].reshape((4*1440,128,128,3))
@@ -583,11 +641,11 @@ for i in range(2,5):
     
     
     callbacks = [
-             ModelCheckpoint(monitor='val_my_iou_metric',
-                             filepath='weights/bce_dice_' + str(i) + '_' + MODEL_NAME,
+             ModelCheckpoint(monitor='val_my_iou_metric_2',
+                             filepath='weights/lavaz_' + str(i) + '_' + MODEL_NAME,
                              save_best_only=True,
                              save_weights_only=True),
-            LRTensorBoard(log_dir='./logs/bce_dice_{}'.format(str(i) + '_' +MODEL_NAME)),
+            LRTensorBoard(log_dir='./logs/lavaz_{}'.format(str(i) + '_' +MODEL_NAME)),
             SGDRScheduler(min_lr=1e-6,
                                      max_lr=1e-2,
                                      steps_per_epoch=np.ceil(float(4*1440) / float(batch_size)),
@@ -598,15 +656,16 @@ for i in range(2,5):
     
     model = models[i]
     
-    model.fit(train_x[:,:,:,:1],train_y[:,:,:,:1],validation_data=[val_x[:,:,:,:1], val_y[:,:,:,:1]], epochs=70, batch_size=batch_size, callbacks=callbacks)
+    model.fit(train_x[:,:,:,:1],train_y[:,:,:,:1],validation_data=[val_x[:,:,:,:1], val_y[:,:,:,:1]], epochs=130, batch_size=batch_size, callbacks=callbacks)
     model.save('folds_s/2_bce_dice_{}.h5'.format(str(i) + '_' +MODEL_NAME))
 
 
 MODEL_NAME = 'FOLDS_resnet34'
 
-models = []
+#models = []
 for i in range(5):
-    models.append(load_model('folds_s/bce_dice_{}.h5'.format(str(i) + '_' +MODEL_NAME), custom_objects={'my_iou_metric': my_iou_metric,'weighted_bce_dice_loss':weighted_bce_dice_loss}))
+#    models.append(load_model('folds_s/bce_dice_{}.h5'.format(str(i) + '_' +MODEL_NAME), custom_objects={'my_iou_metric': my_iou_metric,'weighted_bce_dice_loss':weighted_bce_dice_loss}))
+#    models.append()
     for j in xrange(len(models[i].layers)):
         models[i].layers[j].name='{}_{}'.format(str(i),str(j))
 
@@ -623,8 +682,8 @@ epochs = 70
 batch_size = 15
 
 callbacks = [
-             ModelCheckpoint(monitor=' val_my_iou_metric',
-                             filepath='weights/to_pro_bcedice_' + '_' + MODEL_NAME,
+             ModelCheckpoint(monitor=' val_my_iou_metric_2',
+                             filepath='weights/to_pro_lavaz__' + '_' + MODEL_NAME,
                              save_best_only=True,
                              save_weights_only=True),
             LRTensorBoard(log_dir='./logs/to_pro_bcedice_{}'.format('_' +MODEL_NAME)),
@@ -644,7 +703,7 @@ for i in range(5):
     X.append(X_train[:,:,:,:1])
     X_v.append(X_val[:,:,:,:1])
 model.fit(X,Y_train[:,:,:,:1],validation_data=[X_v, Y_val[:,:,:,:1]], epochs=epochs, batch_size=batch_size, callbacks=callbacks)
-model.save('folds_s/to_pro_bcedice_{}.h5'.format(str(i) + '_' +MODEL_NAME))
+model.save('folds_s/to_pro_lavaz__{}.h5'.format(str(i) + '_' +MODEL_NAME))
 
 
 def RLenc(img, order='F', format=True):
