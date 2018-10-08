@@ -96,35 +96,40 @@ def residual_block(blockInput, num_filters=16, batch_activate = False):
 def build_model(input_layer, start_neurons, DropoutRatio = 0.5):
     # 128 -> 64
     conv1 = Conv2D(start_neurons * 1, (3, 3), activation=None, padding="same")(input_layer)
-    conv1 = residual_block(conv1,start_neurons * 1)
+    conv1 = residual_block(conv1,start_neurons * 1, True)
+    conv1 = residual_block(conv1,start_neurons * 1, True)
     conv1 = residual_block(conv1,start_neurons * 1, True)
     pool1 = MaxPooling2D((2, 2))(conv1)
     pool1 = Dropout(DropoutRatio/2)(pool1)
 
     # 64 -> 32
     conv2 = Conv2D(start_neurons * 2, (3, 3), activation=None, padding="same")(pool1)
-    conv2 = residual_block(conv2,start_neurons * 2)
+    conv2 = residual_block(conv2,start_neurons * 2, True)
+    conv2 = residual_block(conv2,start_neurons * 2, True)
     conv2 = residual_block(conv2,start_neurons * 2, True)
     pool2 = MaxPooling2D((2, 2))(conv2)
     pool2 = Dropout(DropoutRatio)(pool2)
 
     # 32 -> 16
     conv3 = Conv2D(start_neurons * 4, (3, 3), activation=None, padding="same")(pool2)
-    conv3 = residual_block(conv3,start_neurons * 4)
+    conv3 = residual_block(conv3,start_neurons * 4, True)
+    conv3 = residual_block(conv3,start_neurons * 4, True)
     conv3 = residual_block(conv3,start_neurons * 4, True)
     pool3 = MaxPooling2D((2, 2))(conv3)
     pool3 = Dropout(DropoutRatio)(pool3)
 
     # 16 -> 8
     conv4 = Conv2D(start_neurons * 8, (3, 3), activation=None, padding="same")(pool3)
-    conv4 = residual_block(conv4,start_neurons * 8)
+    conv4 = residual_block(conv4,start_neurons * 8, True)
+    conv4 = residual_block(conv4,start_neurons * 8, True)
     conv4 = residual_block(conv4,start_neurons * 8, True)
     pool4 = MaxPooling2D((2, 2))(conv4)
     pool4 = Dropout(DropoutRatio)(pool4)
 
     # Middle
     convm = Conv2D(start_neurons * 16, (3, 3), activation=None, padding="same")(pool4)
-    convm = residual_block(convm,start_neurons * 16)
+    convm = residual_block(convm,start_neurons * 16, True)
+    convm = residual_block(convm,start_neurons * 16, True)
     convm = residual_block(convm,start_neurons * 16, True)
     
     # 8 -> 16
@@ -529,7 +534,7 @@ def keras_lovasz_hinge(labels,logits):
 
 def get_data(word, df):
     a = np.zeros((len(df),net_size,net_size,3))
-    for i in xrange(len(df)):
+    for i in range(len(df)):
         tmp =  cv2.imread('train/{}/{}'.format(word,df[0][i]))
         a[i] = upsample(tmp)
     return data
@@ -566,7 +571,7 @@ y_train_splitted = np.array(np.array_split(Y_train, 5))
 
 def get_model():
     input_layer = Input((net_size, net_size, 1))
-    output_layer = build_model(input_layer, 16,0.5)
+    output_layer = build_model(input_layer, 32,0.5)
     return Model(input_layer,output_layer)
 
 
@@ -582,7 +587,7 @@ y_train_splitted = np.array(np.array_split(Y_train, 5))
 
 def get_model():
     input_layer = Input((net_size, net_size, 1))
-    output_layer = build_model(input_layer, 16,0.5)
+    output_layer = build_model(input_layer, 32,0.5)
     return Model(input_layer,output_layer)
     
 models = [get_model() for i in range(5)]
@@ -630,8 +635,8 @@ for i in range(5):
 MODEL_NAME = 'FOLDS_resnet34'
 from keras import optimizers
 for i in range(5):
-    models[i] = Model(models[i].layers[0].input, models[i].layers[-1].input)
-    models[i].compile(loss=lovasz_loss, optimizer='adam', metrics=[my_iou_metric_2])
+    models[i] = Model(models[i].layers[0].input,[models[i].layers[-1].input,models[i].layers[-1].output])
+    models[i].compile(loss=[lovasz_loss,weighted_bce_dice_loss], optimizer='sgd', loss_weights=[0.9,0.1],metrics=[my_iou_metric_2])
 
 for i in range(5):
     
@@ -656,8 +661,8 @@ for i in range(5):
     
     model = models[i]
     
-    model.fit(train_x[:,:,:,:1],train_y[:,:,:,:1],validation_data=[val_x[:,:,:,:1], val_y[:,:,:,:1]], epochs=130, batch_size=batch_size, callbacks=callbacks)
-    model.save('folds_s/2_bce_dice_{}.h5'.format(str(i) + '_' +MODEL_NAME))
+    model.fit(train_x[:,:,:,:1],[train_y[:,:,:,:1],train_y[:,:,:,:1]],validation_data=[val_x[:,:,:,:1], val_y[:,:,:,:1], val_y[:,:,:,:1]], epochs=130, batch_size=batch_size, callbacks=callbacks)
+    model.save('folds_s/2_bce_lavaz_{}.h5'.format(str(i) + '_' +MODEL_NAME))
 
 
 MODEL_NAME = 'FOLDS_resnet34'
@@ -666,13 +671,13 @@ MODEL_NAME = 'FOLDS_resnet34'
 for i in range(5):
 #    models.append(load_model('folds_s/bce_dice_{}.h5'.format(str(i) + '_' +MODEL_NAME), custom_objects={'my_iou_metric': my_iou_metric,'weighted_bce_dice_loss':weighted_bce_dice_loss}))
 #    models.append()
-    for j in xrange(len(models[i].layers)):
+    for j in range(len(models[i].layers)):
         models[i].layers[j].name='{}_{}'.format(str(i),str(j))
 
-conc = concatenate([model.output for model in models])
+conc = concatenate([model.output[1] for model in models])
 out = Conv2D(1,8,padding='same', activation='sigmoid')(conc)
 model = Model([model.input for model in models],out)
-model.compile(loss=weighted_bce_dice_loss, optimizer='adam', metrics=[my_iou_metric])
+model.compile(loss=weighted_bce_dice_loss, optimizer='sgd', metrics=[my_iou_metric])
 for layer in model.layers:
     layer.trainable = False
 model.layers[-1].trainable = True
