@@ -46,11 +46,13 @@ img_size_ori = 101
 img_size_target = 101
 net_size = 128
 def upsample(img):# not used
-    reflect = cv2.copyMakeBorder(img,13,14,13,14,cv2.BORDER_REFLECT)
+#    reflect = cv2.copyMakeBorder(img,13,14,13,14,cv2.BORDER_REFLECT)
+    reflect = cv2.resize(img,(128,128),cv2.INTER_NEAREST)
     return reflect
     
 def downsample(img):# not used
-    ans = img[13:114,13:114]
+#    ans = img[13:114,13:114]
+    ans = cv2.resize(img,(101,101), cv2.INTER_NEAREST)
     return ans
 
 
@@ -88,49 +90,137 @@ def residual_block(blockInput, num_filters=16, batch_activate = False):
     x = BatchActivate(blockInput)
     x = convolution_block(x, num_filters, (3,3) )
     x = convolution_block(x, num_filters, (3,3), activation=False)
-    x = Add()([x, blockInput])
+    x = concatenate([x, blockInput])
+    x = Conv2D(num_filters, 1, activation='relu', padding="same")(x)
     if batch_activate:
         x = BatchActivate(x)
     return x
 
-def build_model(input_layer, start_neurons, DropoutRatio = 0.5):
+
+def _wide_basic(n_input_plane, n_output_plane, stride):
+    def f(net):
+        # format of conv_params:
+        #               [ [nb_col="kernel width", nb_row="kernel height",
+        #               subsample="(stride_vertical,stride_horizontal)",
+        #               border_mode="same" or "valid"] ]
+        # B(3,3): orignal <<basic>> block
+        conv_params = [ [3,3,stride,"same"],
+                        [3,3,(1,1),"same"] ]
+        
+        n_bottleneck_plane = n_output_plane
+
+        # Residual block
+        for i, v in enumerate(conv_params):
+            if i == 0:
+                if n_input_plane != n_output_plane:
+                    net = BatchNormalization()(net)
+                    net = Activation("relu")(net)
+                    convs = net
+                else:
+                    convs = BatchNormalization()(net)
+                    convs = Activation("relu")(convs)
+                convs = Convolution2D(n_bottleneck_plane, nb_col=v[0], nb_row=v[1],
+                                     subsample=v[2],
+                                     border_mode=v[3],
+                                     init=weight_init,
+                                     W_regularizer=l2(weight_decay),
+                                     bias=use_bias)(convs)
+            else:
+                convs = BatchNormalization()(convs)
+                convs = Activation("relu")(convs)
+                if dropout_probability > 0:
+                   convs = Dropout(dropout_probability)(convs)
+                convs = Convolution2D(n_bottleneck_plane, nb_col=v[0], nb_row=v[1],
+                                     subsample=v[2],
+                                     border_mode=v[3],
+                                     init=weight_init,
+                                     W_regularizer=l2(weight_decay),
+                                     bias=use_bias)(convs)
+
+        # Shortcut Conntection: identity function or 1x1 convolutional
+        #  (depends on difference between input & output shape - this
+        #   corresponds to whether we are using the first block in each
+        #   group; see _layer() ).
+        if n_input_plane != n_output_plane:
+            shortcut = Convolution2D(n_output_plane, nb_col=1, nb_row=1,
+                                     subsample=stride,
+                                     border_mode="same",
+                                     init=weight_init,
+                                     W_regularizer=l2(weight_decay),
+                                     bias=use_bias)(net)
+        else:
+            shortcut = net
+
+
+        return  Add()([convs, shortcut])
+    
+    return f
+
+
+# "Stacking Residual Units on the same stage"
+def _layer(block, n_input_plane, n_output_plane, count, stride):
+    def f(net):
+        net = block(n_input_plane, n_output_plane, stride)(net)
+        for i in range(2,int(count+1)):
+            net = block(n_output_plane, n_output_plane, stride=(1,1))(net)
+        return net
+    return f
+weight_init="he_normal"
+weight_decay = 0.0005 
+use_bias = False
+dropout_probability = 0.2
+def build_model(input_layer, start_neurons, DropoutRatio = 0.3):
     # 128 -> 64
-    conv1 = Conv2D(start_neurons * 1, (3, 3), activation=None, padding="same")(input_layer)
+    n = (depth - 4) / 6
+    block_fn = _wide_basic
+    conv1 = Conv2D(int(start_neurons), (3, 3), activation=None, padding="same")(input_layer)
+    conv1 = residual_block(conv1,start_neurons * 1, True)
     conv1 = residual_block(conv1,start_neurons * 1, True)
     conv1 = residual_block(conv1,start_neurons * 1, True)
     conv1 = residual_block(conv1,start_neurons * 1, True)
     pool1 = MaxPooling2D((2, 2))(conv1)
-    pool1 = Dropout(DropoutRatio/2)(pool1)
+#    conv1 = _layer(block_fn, n_input_plane=int(start_neurons/2), n_output_plane=start_neurons, count=3, stride=(2,2))(conv1x)
+    pool1 = Dropout(DropoutRatio/2)(conv1)
 
     # 64 -> 32
     conv2 = Conv2D(start_neurons * 2, (3, 3), activation=None, padding="same")(pool1)
     conv2 = residual_block(conv2,start_neurons * 2, True)
     conv2 = residual_block(conv2,start_neurons * 2, True)
     conv2 = residual_block(conv2,start_neurons * 2, True)
+    conv2 = residual_block(conv2,start_neurons * 2, True)
     pool2 = MaxPooling2D((2, 2))(conv2)
-    pool2 = Dropout(DropoutRatio)(pool2)
+ #   conv2 = _layer(block_fn, n_input_plane=start_neurons, n_output_plane=start_neurons*2, count=3, stride=(2,2))(conv2x)
+    pool2 = Dropout(DropoutRatio)(conv2)
 
     # 32 -> 16
     conv3 = Conv2D(start_neurons * 4, (3, 3), activation=None, padding="same")(pool2)
     conv3 = residual_block(conv3,start_neurons * 4, True)
     conv3 = residual_block(conv3,start_neurons * 4, True)
     conv3 = residual_block(conv3,start_neurons * 4, True)
+    conv3 = residual_block(conv3,start_neurons * 4, True)
     pool3 = MaxPooling2D((2, 2))(conv3)
-    pool3 = Dropout(DropoutRatio)(pool3)
+#    conv3 = _layer(block_fn, n_input_plane=start_neurons*2, n_output_plane=start_neurons*4, count=3, stride=(2,2))(conv3x)
+    pool3 = Dropout(DropoutRatio)(conv3)
 
     # 16 -> 8
     conv4 = Conv2D(start_neurons * 8, (3, 3), activation=None, padding="same")(pool3)
     conv4 = residual_block(conv4,start_neurons * 8, True)
     conv4 = residual_block(conv4,start_neurons * 8, True)
     conv4 = residual_block(conv4,start_neurons * 8, True)
+    conv4 = residual_block(conv4,start_neurons * 8, True)
     pool4 = MaxPooling2D((2, 2))(conv4)
-    pool4 = Dropout(DropoutRatio)(pool4)
+#    conv4 = _layer(block_fn, n_input_plane=start_neurons*4, n_output_plane=start_neurons*8, count=3, stride=(2,2))(conv4x)
+    pool4 = Dropout(DropoutRatio)(conv4)
 
     # Middle
     convm = Conv2D(start_neurons * 16, (3, 3), activation=None, padding="same")(pool4)
     convm = residual_block(convm,start_neurons * 16, True)
     convm = residual_block(convm,start_neurons * 16, True)
     convm = residual_block(convm,start_neurons * 16, True)
+    convm = residual_block(convm,start_neurons * 16, True)
+    convm = residual_block(convm,start_neurons * 16, True)
+ #   convm = _layer(block_fn, n_input_plane=start_neurons*8, n_output_plane=start_neurons*16, count=3, stride=(1,1))(convm)
+    
     
     # 8 -> 16
     deconv4 = Conv2DTranspose(start_neurons * 8, (3, 3), strides=(2, 2), padding="same")(convm)
@@ -138,7 +228,7 @@ def build_model(input_layer, start_neurons, DropoutRatio = 0.5):
     uconv4 = Dropout(DropoutRatio)(uconv4)
     
     uconv4 = Conv2D(start_neurons * 8, (3, 3), activation=None, padding="same")(uconv4)
-    uconv4 = residual_block(uconv4,start_neurons * 8)
+    uconv4 = residual_block(uconv4,start_neurons * 8, True)
     uconv4 = residual_block(uconv4,start_neurons * 8, True)
     
     # 16 -> 32
@@ -148,7 +238,7 @@ def build_model(input_layer, start_neurons, DropoutRatio = 0.5):
     uconv3 = Dropout(DropoutRatio)(uconv3)
     
     uconv3 = Conv2D(start_neurons * 4, (3, 3), activation=None, padding="same")(uconv3)
-    uconv3 = residual_block(uconv3,start_neurons * 4)
+    uconv3 = residual_block(uconv3,start_neurons * 4, True)
     uconv3 = residual_block(uconv3,start_neurons * 4, True)
 
     # 32 -> 64
@@ -157,7 +247,87 @@ def build_model(input_layer, start_neurons, DropoutRatio = 0.5):
         
     uconv2 = Dropout(DropoutRatio)(uconv2)
     uconv2 = Conv2D(start_neurons * 2, (3, 3), activation=None, padding="same")(uconv2)
-    uconv2 = residual_block(uconv2,start_neurons * 2)
+    uconv2 = residual_block(uconv2,start_neurons * 2, True)
+    uconv2 = residual_block(uconv2,start_neurons * 2, True)
+    
+    # 64 -> 128
+    #deconv1 = Conv2DTranspose(start_neurons * 1, (3, 3), strides=(2, 2), padding="same")(uconv2)
+    deconv1 = Conv2DTranspose(start_neurons * 1, (2, 2), strides=(2, 2), padding="same")(uconv2)
+    uconv1 = concatenate([deconv1, conv1])
+    
+    uconv1 = Dropout(DropoutRatio)(uconv1)
+    uconv1 = Conv2D(start_neurons * 1, (3, 3), activation=None, padding="same")(uconv1)
+    uconv1 = residual_block(uconv1,start_neurons * 1, True)
+    uconv1 = residual_block(uconv1,start_neurons * 1, True)
+    
+    #uconv1 = Dropout(DropoutRatio/2)(uconv1)
+    #output_layer = Conv2D(1, (1,1), padding="same", activation="sigmoid")(uconv1)
+    output_layer_noActi = Conv2D(1, (1,1), padding="same", activation=None)(uconv1)
+    output_layer =  Activation('sigmoid')(output_layer_noActi)
+    
+    return output_layer
+
+
+def build_model(input_layer, start_neurons, DropoutRatio = 0.5):
+    # 128 -> 64
+    conv1 = Conv2D(start_neurons * 1, (3, 3), activation=None, padding="same")(input_layer)
+    conv1 = residual_block(conv1,start_neurons * 1, True)
+    conv1 = residual_block(conv1,start_neurons * 1, True)
+    pool1 = MaxPooling2D((2, 2))(conv1)
+    pool1 = Dropout(DropoutRatio/2)(pool1)
+
+    # 64 -> 32
+    conv2 = Conv2D(start_neurons * 2, (3, 3), activation=None, padding="same")(pool1)
+    conv2 = residual_block(conv2,start_neurons * 2, True)
+    conv2 = residual_block(conv2,start_neurons * 2, True)
+    pool2 = MaxPooling2D((2, 2))(conv2)
+    pool2 = Dropout(DropoutRatio)(pool2)
+
+    # 32 -> 16
+    conv3 = Conv2D(start_neurons * 4, (3, 3), activation=None, padding="same")(pool2)
+    conv3 = residual_block(conv3,start_neurons * 4, True)
+    conv3 = residual_block(conv3,start_neurons * 4, True)
+    pool3 = MaxPooling2D((2, 2))(conv3)
+    pool3 = Dropout(DropoutRatio)(pool3)
+
+    # 16 -> 8
+    conv4 = Conv2D(start_neurons * 8, (3, 3), activation=None, padding="same")(pool3)
+    conv4 = residual_block(conv4,start_neurons * 8, True)
+    conv4 = residual_block(conv4,start_neurons * 8, True)
+    pool4 = MaxPooling2D((2, 2))(conv4)
+    pool4 = Dropout(DropoutRatio)(pool4)
+
+    # Middle
+    convm = Conv2D(start_neurons * 16, (3, 3), activation=None, padding="same")(pool4)
+    convm = residual_block(convm,start_neurons * 16, True)
+    convm = residual_block(convm,start_neurons * 16, True)
+    
+    # 8 -> 16
+    deconv4 = Conv2DTranspose(start_neurons * 8, (3, 3), strides=(2, 2), padding="same")(convm)
+    uconv4 = concatenate([deconv4, conv4])
+    uconv4 = Dropout(DropoutRatio)(uconv4)
+    
+    uconv4 = Conv2D(start_neurons * 8, (3, 3), activation=None, padding="same")(uconv4)
+    uconv4 = residual_block(uconv4,start_neurons * 8, True)
+    uconv4 = residual_block(uconv4,start_neurons * 8, True)
+    
+    # 16 -> 32
+    #deconv3 = Conv2DTranspose(start_neurons * 4, (3, 3), strides=(2, 2), padding="same")(uconv4)
+    deconv3 = Conv2DTranspose(start_neurons * 4, (2, 2), strides=(2, 2), padding="valid")(uconv4)
+    uconv3 = concatenate([deconv3, conv3])    
+    uconv3 = Dropout(DropoutRatio)(uconv3)
+    
+    uconv3 = Conv2D(start_neurons * 4, (3, 3), activation=None, padding="same")(uconv3)
+    uconv3 = residual_block(uconv3,start_neurons * 4, True)
+    uconv3 = residual_block(uconv3,start_neurons * 4, True)
+
+    # 32 -> 64
+    deconv2 = Conv2DTranspose(start_neurons * 2, (2, 2), strides=(2, 2), padding="same")(uconv3)
+    uconv2 = concatenate([deconv2, conv2])
+        
+    uconv2 = Dropout(DropoutRatio)(uconv2)
+    uconv2 = Conv2D(start_neurons * 2, (3, 3), activation=None, padding="same")(uconv2)
+    uconv2 = residual_block(uconv2,start_neurons * 2, True)
     uconv2 = residual_block(uconv2,start_neurons * 2, True)
     
     # 64 -> 128
@@ -167,7 +337,7 @@ def build_model(input_layer, start_neurons, DropoutRatio = 0.5):
     
     uconv1 = Dropout(DropoutRatio)(uconv1)
     uconv1 = Conv2D(start_neurons * 1, (3, 3), activation=None, padding="same")(uconv1)
-    uconv1 = residual_block(uconv1,start_neurons * 1)
+    uconv1 = residual_block(uconv1,start_neurons * 1, True)
     uconv1 = residual_block(uconv1,start_neurons * 1, True)
     
     #uconv1 = Dropout(DropoutRatio/2)(uconv1)
@@ -547,6 +717,193 @@ def lovasz_loss(y_true, y_pred):
     return loss
 
 
+def _bn_relu(input):
+    """Helper to build a BN -> relu block
+    """
+    norm = BatchNormalization(axis=CHANNEL_AXIS)(input)
+    return Activation("relu")(norm)
+
+
+def _conv_bn_relu(**conv_params):
+    """Helper to build a conv -> BN -> relu block
+    """
+    filters = conv_params["filters"]
+    kernel_size = conv_params["kernel_size"]
+    strides = conv_params.setdefault("strides", (1, 1))
+    kernel_initializer = conv_params.setdefault("kernel_initializer", "he_normal")
+    padding = conv_params.setdefault("padding", "same")
+    kernel_regularizer = conv_params.setdefault("kernel_regularizer", l2(1.e-4))
+
+    def f(input):
+        conv = Conv2D(filters=filters, kernel_size=kernel_size,
+                      strides=strides, padding=padding,
+                      kernel_initializer=kernel_initializer,
+                      kernel_regularizer=kernel_regularizer)(input)
+        return _bn_relu(conv)
+
+    return f
+
+
+def _bn_relu_conv(**conv_params):
+    """Helper to build a BN -> relu -> conv block.
+    This is an improved scheme proposed in http://arxiv.org/pdf/1603.05027v2.pdf
+    """
+    filters = conv_params["filters"]
+    kernel_size = conv_params["kernel_size"]
+    strides = conv_params.setdefault("strides", (1, 1))
+    kernel_initializer = conv_params.setdefault("kernel_initializer", "he_normal")
+    padding = conv_params.setdefault("padding", "same")
+    kernel_regularizer = conv_params.setdefault("kernel_regularizer", l2(1.e-4))
+
+    def f(input):
+        activation = _bn_relu(input)
+        return Conv2D(filters=filters, kernel_size=kernel_size,
+                      strides=strides, padding=padding,
+                      kernel_initializer=kernel_initializer,
+                      kernel_regularizer=kernel_regularizer)(activation)
+
+    return f
+
+
+def _shortcut(input, residual):
+    """Adds a shortcut between input and residual block and merges them with "sum"
+    """
+    # Expand channels of shortcut to match residual.
+    # Stride appropriately to match residual (width, height)
+    # Should be int if network architecture is correctly configured.
+    input_shape = K.int_shape(input)
+    residual_shape = K.int_shape(residual)
+    stride_width = int(round(input_shape[ROW_AXIS] / residual_shape[ROW_AXIS]))
+    stride_height = int(round(input_shape[COL_AXIS] / residual_shape[COL_AXIS]))
+    equal_channels = input_shape[CHANNEL_AXIS] == residual_shape[CHANNEL_AXIS]
+
+    shortcut = input
+    # 1 X 1 conv if shape is different. Else identity.
+    if stride_width > 1 or stride_height > 1 or not equal_channels:
+        shortcut = Conv2D(filters=residual_shape[CHANNEL_AXIS],
+                          kernel_size=(1, 1),
+                          strides=(stride_width, stride_height),
+                          padding="valid",
+                          kernel_initializer="he_normal",
+                          kernel_regularizer=l2(0.0001))(input)
+
+    return add([shortcut, residual])
+
+def basic_block(filters, init_strides=(1, 1), is_first_block_of_first_layer=False):
+    """Basic 3 X 3 convolution blocks for use on resnets with layers <= 34.
+    """
+    def f(input):
+
+        if is_first_block_of_first_layer:
+            # don't repeat bn->relu since we just did bn->relu->maxpool
+            conv1 = Conv2D(filters=filters, kernel_size=(3, 3),
+                           strides=init_strides,
+                           padding="same",
+                           kernel_initializer="he_normal",
+                           kernel_regularizer=l2(1e-4))(input)
+        else:
+            conv1 = _bn_relu_conv(filters=filters, kernel_size=(3, 3),
+                                  strides=init_strides)(input)
+
+        residual = _bn_relu_conv(filters=filters, kernel_size=(3, 3))(conv1)
+        return _shortcut(input, residual)
+
+    return f
+
+def _residual_block(block_function, filters, repetitions, is_first_layer=False):
+    """Builds a residual block with repeating bottleneck blocks.
+    """
+    def f(input):
+        for i in range(repetitions):
+            init_strides = (1, 1)
+            if i == 0 and not is_first_layer:
+                init_strides = (2, 2)
+            input = block_function(filters=filters, init_strides=init_strides,
+                                   is_first_block_of_first_layer=(is_first_layer and i == 0))(input)
+        return input
+
+    return f
+
+def _handle_dim_ordering():
+    global ROW_AXIS
+    global COL_AXIS
+    global CHANNEL_AXIS
+    if K.image_dim_ordering() == 'tf':
+        ROW_AXIS = 1
+        COL_AXIS = 2
+        CHANNEL_AXIS = 3
+    else:
+        CHANNEL_AXIS = 1
+        ROW_AXIS = 2
+        COL_AXIS = 3
+
+
+def _get_block(identifier):
+    if isinstance(identifier, six.string_types):
+        res = globals().get(identifier)
+        if not res:
+            raise ValueError('Invalid {}'.format(identifier))
+        return res
+    return identifier
+
+
+class ResnetBuilder(object):
+    @staticmethod
+    def build(input_shape, block_fn, repetitions,input_tensor):
+        _handle_dim_ordering()
+        if len(input_shape) != 3:
+            raise Exception("Input shape should be a tuple (nb_channels, nb_rows, nb_cols)")
+
+        # Permute dimension order if necessary
+        if K.image_dim_ordering() == 'tf':
+            input_shape = (input_shape[1], input_shape[2], input_shape[0])
+
+        # Load function from str if needed.
+        block_fn = _get_block(block_fn)
+        
+        if input_tensor is None:
+            img_input = Input(shape=input_shape)
+        else:
+            if not K.is_keras_tensor(input_tensor):
+                img_input = Input(tensor=input_tensor, shape=input_shape)
+            else:
+                img_input = input_tensor
+                
+        conv1 = _conv_bn_relu(filters=64, kernel_size=(7, 7), strides=(2, 2))(img_input)
+        pool1 = MaxPooling2D(pool_size=(3, 3), strides=(2, 2), padding="same")(conv1)
+
+        block = pool1
+        filters = 64
+        for i, r in enumerate(repetitions):
+            block = _residual_block(block_fn, filters=filters, repetitions=r, is_first_layer=(i == 0))(block)
+            filters *= 2
+
+        # Last activation
+        block = _bn_relu(block)
+
+        model = Model(inputs=img_input, outputs=block)
+        return model
+
+    @staticmethod
+    def build_resnet_34(input_shape,input_tensor):
+        return ResnetBuilder.build(input_shape, basic_block, [3, 4, 6, 3],input_tensor)
+
+from keras import optimizers
+def UResNet34(input_shape=(128, 128, 1), classes=1, decoder_filters=16, decoder_block_type='upsampling',
+                       encoder_weights="imagenet", input_tensor=None, activation='sigmoid', **kwargs):
+
+    backbone = ResnetBuilder.build_resnet_34(input_shape=input_shape,input_tensor=input_tensor)
+    
+    input_layer = backbone.input #input = backbone.input
+    output_layer = build_model(input_layer, 16,0.5) #x
+    model = Model(input_layer, output_layer)
+    c = optimizers.adam(lr = 0.01)
+
+    model.compile(loss="binary_crossentropy", optimizer=c, metrics=[my_iou_metric])
+    model.name = 'u-resnet34'
+
+    return model
+
 
 X_train = np.array([upsample(cv2.imread('train/images/{}'.format(name))) for name in train_df[0]],np.float32) / 255
 Y_train = np.array([upsample(cv2.imread('train/masks/{}'.format(name))) for name in train_df[0]],np.float32) / 255
@@ -571,7 +928,7 @@ y_train_splitted = np.array(np.array_split(Y_train, 5))
 
 def get_model():
     input_layer = Input((net_size, net_size, 1))
-    output_layer = build_model(input_layer, 32,0.5)
+    output_layer = build_model(input_layer, 20,0.5)
     return Model(input_layer,output_layer)
 
 
@@ -585,22 +942,24 @@ batch_size = 60
 X_train_splitted = np.array(np.array_split(X_train, 5))
 y_train_splitted = np.array(np.array_split(Y_train, 5))
 
-def get_model():
-    input_layer = Input((net_size, net_size, 1))
-    output_layer = build_model(input_layer, 32,0.5)
-    return Model(input_layer,output_layer)
+depth = 28              # table 5 on page 8 indicates best value (4.17) CIFAR-10
+k = 1 
+
     
-models = [get_model() for i in range(5)]
+models = [UResNet34(input_shape = (1,128,128)) for i in range(5)]
 model1 = models[0]
+from keras import optimizers
 MODEL_NAME = 'FOLDS_resnet34'
-#c = optimizers.adam(lr = 0.001)
+c = optimizers.adam(lr = 0.01)
 for model in models:
-    model.compile(loss="binary_crossentropy", optimizer='adam', metrics=[my_iou_metric])
+    print (model.summary())
+#    model.compile(loss="binary_crossentropy", optimizer=c, metrics=[my_iou_metric])
     
 MODEL_NAME = 'FOLDS_resnet34'
 epochs = 35
-batch_size = 64
+batch_size = 32
 
+#X_train[X_train == 0] = -1
 X_train_splitted = np.array(np.array_split(X_train, 5))
 y_train_splitted = np.array(np.array_split(Y_train, 5))
 
@@ -612,31 +971,29 @@ for i in range(5):
     
     
     callbacks = [
-             ModelCheckpoint(monitor=' val_my_iou_metric',
-                             filepath='weights/' + str(i) + '_' + MODEL_NAME,
-                             save_best_only=True,
-                             save_weights_only=True),
-            LRTensorBoard(log_dir='./logs/{}'.format(str(i) + '_' +MODEL_NAME)),
-            SGDRScheduler(min_lr=1e-6,
-                                     max_lr=1e-3,
-                                     steps_per_epoch=np.ceil(float(4*1440) / float(batch_size)),
-                                     lr_decay=0.9,
-                                     cycle_length=10,
-                                     mult_factor=1.5)
+                 EarlyStopping(monitor='my_iou_metric', mode = 'max',patience=10, verbose=1),
+                 ModelCheckpoint(save_model_name,monitor='my_iou_metric', 
+                                   mode = 'max', save_best_only=True, verbose=1),
+                 ReduceLROnPlateau(monitor='my_iou_metric', mode = 'max',factor=0.5, patience=5, min_lr=0.0001, verbose=1),
+                 LRTensorBoard(log_dir='./logs/{}'.format(str(i) + '_' +MODEL_NAME))
             ]
     
     model = models[i]
 
     
-    model.fit(train_x[:,:,:,:1],train_y[:,:,:,:1],validation_data=[val_x[:,:,:,:1], val_y[:,:,:,:1]], epochs=epochs, batch_size=batch_size, callbacks=callbacks)
+    model.fit(train_x[:,:,:,:1],train_y[:,:,:,:1],validation_data=[val_x[:,:,:,:1], val_y[:,:,:,:1]], epochs=130, batch_size=batch_size, callbacks=callbacks)
     model.save('folds_s/{}.h5'.format(str(i) + '_' +MODEL_NAME))
     
 
 MODEL_NAME = 'FOLDS_resnet34'
 from keras import optimizers
 for i in range(5):
-    models[i] = Model(models[i].layers[0].input,[models[i].layers[-1].input,models[i].layers[-1].output])
-    models[i].compile(loss=[lovasz_loss,weighted_bce_dice_loss], optimizer='sgd', loss_weights=[0.9,0.1],metrics=[my_iou_metric_2])
+    learning_rate = 0.01
+    models[i] = load_model('folds_s/{}.h5'.format(str(i) + '_' +MODEL_NAME),  custom_objects={'my_iou_metric': my_iou_metric,'weighted_bce_dice_loss':weighted_bce_dice_loss})
+#    models[i] = Model(models[i].layers[0].input,[models[i].layers[-1].input,models[i].layers[-1].output])
+    models[i] = Model(models[i].layers[0].input,[models[i].layers[-1].input])
+    c = optimizers.adam(lr = learning_rate)
+    models[i].compile(loss=[lovasz_loss], optimizer=c, loss_weights=[1.0],metrics=[my_iou_metric_2])
 
 for i in range(5):
     
@@ -645,49 +1002,44 @@ for i in range(5):
     val_x,val_y     =  X_train_splitted[i],y_train_splitted[i]
     
     
-    callbacks = [
-             ModelCheckpoint(monitor='val_my_iou_metric_2',
+    callbacks = [EarlyStopping(monitor='val_my_iou_metric_2', mode = 'max',patience=20, verbose=1),
+                 ModelCheckpoint(monitor='val_my_iou_metric_2',
                              filepath='weights/lavaz_' + str(i) + '_' + MODEL_NAME,
                              save_best_only=True,
-                             save_weights_only=True),
-            LRTensorBoard(log_dir='./logs/lavaz_{}'.format(str(i) + '_' +MODEL_NAME)),
-            SGDRScheduler(min_lr=1e-6,
-                                     max_lr=1e-2,
-                                     steps_per_epoch=np.ceil(float(4*1440) / float(batch_size)),
-                                     lr_decay=0.9,
-                                     cycle_length=10,
-                                     mult_factor=1.5)
+                             save_weights_only=True,
+                             mode = 'max',
+                             verbose=1),
+                  LRTensorBoard(log_dir='./logs/lavaz_{}'.format(str(i) + '_' +MODEL_NAME)),
+                  ReduceLROnPlateau(monitor='val_my_iou_metric_2', mode = 'max',factor=0.5, patience=5, min_lr=0.0001, verbose=1)
             ]
     
     model = models[i]
     
-    model.fit(train_x[:,:,:,:1],[train_y[:,:,:,:1],train_y[:,:,:,:1]],validation_data=[val_x[:,:,:,:1], val_y[:,:,:,:1], val_y[:,:,:,:1]], epochs=130, batch_size=batch_size, callbacks=callbacks)
+    model.fit(train_x[:,:,:,:1],[train_y[:,:,:,:1]],validation_data=[val_x[:,:,:,:1],[ val_y[:,:,:,:1]]], epochs=200, batch_size=batch_size, callbacks=callbacks)
     model.save('folds_s/2_bce_lavaz_{}.h5'.format(str(i) + '_' +MODEL_NAME))
 
 
 MODEL_NAME = 'FOLDS_resnet34'
-
 #models = []
 for i in range(5):
-#    models.append(load_model('folds_s/bce_dice_{}.h5'.format(str(i) + '_' +MODEL_NAME), custom_objects={'my_iou_metric': my_iou_metric,'weighted_bce_dice_loss':weighted_bce_dice_loss}))
-#    models.append()
+#    models.append(load_model('folds_s/2_bce_lavaz_{}.h5'.format(str(i) + '_' +MODEL_NAME), custom_objects={'my_iou_metric': my_iou_metric,'weighted_bce_dice_loss':weighted_bce_dice_loss,'lovasz_loss':lovasz_loss,'my_iou_metric_2':my_iou_metric_2}))
     for j in range(len(models[i].layers)):
         models[i].layers[j].name='{}_{}'.format(str(i),str(j))
 
 conc = concatenate([model.output[1] for model in models])
 out = Conv2D(1,8,padding='same', activation='sigmoid')(conc)
 model = Model([model.input for model in models],out)
-model.compile(loss=weighted_bce_dice_loss, optimizer='sgd', metrics=[my_iou_metric])
+model.compile(loss=weighted_bce_dice_loss, optimizer='adam', metrics=[my_iou_metric])
 for layer in model.layers:
     layer.trainable = False
 model.layers[-1].trainable = True
 model.layers[-2].trainable = True
 
 epochs = 70
-batch_size = 15
+batch_size = 10
 
 callbacks = [
-             ModelCheckpoint(monitor=' val_my_iou_metric_2',
+             ModelCheckpoint(monitor=' val_my_iou_metric',
                              filepath='weights/to_pro_lavaz__' + '_' + MODEL_NAME,
                              save_best_only=True,
                              save_weights_only=True),
@@ -767,8 +1119,8 @@ for n, id_ in (enumerate(test_ids)):
 X_test = np.array(X_test,np.float32) / 255
 X_test_tta = np.array(X_test_tta, np.float32) / 255
 
-preds_test = model.predict([X_test[:,:,:,:1],X_test[:,:,:,:1],X_test[:,:,:,:1],X_test[:,:,:,:1]], verbose=1)
-preds_test_tta = model.predict([X_test_tta[:,:,:,:1],X_test_tta[:,:,:,:1],X_test_tta[:,:,:,:1],X_test_tta[:,:,:,:1]], verbose=1)
+preds_test = model.predict([X_test[:,:,:,:1],X_test[:,:,:,:1],X_test[:,:,:,:1],X_test[:,:,:,:1],X_test[:,:,:,:1]], verbose=1)
+preds_test_tta = model.predict([X_test_tta[:,:,:,:1],X_test_tta[:,:,:,:1],X_test_tta[:,:,:,:1],X_test_tta[:,:,:,:1],X_test_tta[:,:,:,:1]], verbose=1)
 preds_tmp = np.array([np.fliplr(y) for y in preds_test_tta])
 preds_test = (preds_test + preds_tmp) /2
 preds_test_t = (preds_test > 0.5).astype(np.uint8)
