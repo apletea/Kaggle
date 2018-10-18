@@ -47,7 +47,7 @@ img_size_target = 101
 net_size = 128
 def upsample(img):# not used
 #    reflect = cv2.copyMakeBorder(img,13,14,13,14,cv2.BORDER_REFLECT)
-    reflect = cv2.resize(img,(128,128),cv2.INTER_NEAREST)
+    reflect = cv2.resize(img,(101,101),cv2.INTER_NEAREST)
     return reflect
     
 def downsample(img):# not used
@@ -946,13 +946,13 @@ depth = 28              # table 5 on page 8 indicates best value (4.17) CIFAR-10
 k = 1 
 
     
-models = [UResNet34(input_shape = (1,128,128)) for i in range(5)]
-model1 = models[0]
+#models = [UResNet34(input_shape = (1,128,128)) for i in range(5)]
+#model1 = models[0]
 from keras import optimizers
 MODEL_NAME = 'FOLDS_resnet34'
 c = optimizers.adam(lr = 0.01)
-for model in models:
-    print (model.summary())
+#for model in models:
+#    print (model.summary())
 #    model.compile(loss="binary_crossentropy", optimizer=c, metrics=[my_iou_metric])
     
 MODEL_NAME = 'FOLDS_resnet34'
@@ -963,66 +963,67 @@ batch_size = 32
 X_train_splitted = np.array(np.array_split(X_train, 5))
 y_train_splitted = np.array(np.array_split(Y_train, 5))
 
-for i in range(5):
+#for i in range(5):
     
-    train_x         =  X_train_splitted[(np.arange(5)!=i)].reshape((4*1440,128,128,3))
-    train_y         =  y_train_splitted[(np.arange(5)!=i)].reshape((4*1440,128,128,3))
-    val_x,val_y     = X_train_splitted[i],y_train_splitted[i]
+#    train_x         =  X_train_splitted[(np.arange(5)!=i)].reshape((4*1440,128,128,3))
+#    train_y         =  y_train_splitted[(np.arange(5)!=i)].reshape((4*1440,128,128,3))
+#    val_x,val_y     = X_train_splitted[i],y_train_splitted[i]
     
     
-    callbacks = [
-                 EarlyStopping(monitor='my_iou_metric', mode = 'max',patience=10, verbose=1),
-                 ModelCheckpoint(save_model_name,monitor='my_iou_metric', 
-                                   mode = 'max', save_best_only=True, verbose=1),
-                 ReduceLROnPlateau(monitor='my_iou_metric', mode = 'max',factor=0.5, patience=5, min_lr=0.0001, verbose=1),
-                 LRTensorBoard(log_dir='./logs/{}'.format(str(i) + '_' +MODEL_NAME))
-            ]
+#    callbacks = [
+#                 EarlyStopping(monitor='my_iou_metric', mode = 'max',patience=10, verbose=1),
+#                 ModelCheckpoint(save_model_name,monitor='my_iou_metric', 
+#                                   mode = 'max', save_best_only=True, verbose=1),
+#                 ReduceLROnPlateau(monitor='my_iou_metric', mode = 'max',factor=0.5, patience=5, min_lr=0.0001, verbose=1),
+#                 LRTensorBoard(log_dir='./logs/{}'.format(str(i) + '_' +MODEL_NAME))
+#            ]
     
-    model = models[i]
+#    model = models[i]
 
     
-    model.fit(train_x[:,:,:,:1],train_y[:,:,:,:1],validation_data=[val_x[:,:,:,:1], val_y[:,:,:,:1]], epochs=130, batch_size=batch_size, callbacks=callbacks)
-    model.save('folds_s/{}.h5'.format(str(i) + '_' +MODEL_NAME))
+ #   model.fit(train_x[:,:,:,:1],train_y[:,:,:,:1],validation_data=[val_x[:,:,:,:1], val_y[:,:,:,:1]], epochs=130, batch_size=batch_size, callbacks=callbacks)
+  #  model.save('folds_s/{}.h5'.format(str(i) + '_' +MODEL_NAME))
     
-
-MODEL_NAME = 'FOLDS_resnet34'
-from keras import optimizers
-for i in range(5):
-    learning_rate = 0.01
-    models[i] = load_model('folds_s/{}.h5'.format(str(i) + '_' +MODEL_NAME),  custom_objects={'my_iou_metric': my_iou_metric,'weighted_bce_dice_loss':weighted_bce_dice_loss})
+#models=[]
+#MODEL_NAME = 'FOLDS_resnet34'
+#from keras import optimizers
+#for i in range(5):
+#    learning_rate = 0.01
+#    models.append(load_model('Unet_resnet_v5.model',  custom_objects={'my_iou_metric_2':my_iou_metric_2,'weighted_bce_dice_loss':weighted_bce_dice_loss,'lovasz_loss':lovasz_loss}))
 #    models[i] = Model(models[i].layers[0].input,[models[i].layers[-1].input,models[i].layers[-1].output])
-    models[i] = Model(models[i].layers[0].input,[models[i].layers[-1].input])
-    c = optimizers.adam(lr = learning_rate)
-    models[i].compile(loss=[lovasz_loss], optimizer=c, loss_weights=[1.0],metrics=[my_iou_metric_2])
-
+#    out = Activation('sigmoid',name='sigma')(models[i].output)
+#    models[i] = Model(models[i].layers[0].input,out)
+#    c = optimizers.adam(lr = learning_rate)
+#    models[i].compile(loss=weighted_bce_dice_loss, optimizer=c, loss_weights=[1.0],metrics=[my_iou_metric])
+#
+#for i in range(5):
+#    
+#    train_x         =  X_train_splitted[(np.arange(5)!=i)].reshape((4*1440,101,101,3))
+#    train_y         =  y_train_splitted[(np.arange(5)!=i)].reshape((4*1440,101,101,3))
+#    val_x,val_y     =  X_train_splitted[i],y_train_splitted[i]
+#    
+#    
+#    callbacks = [EarlyStopping(monitor='val_my_iou_metric', mode = 'max',patience=20, verbose=1),
+#                 ModelCheckpoint(monitor='val_my_iou_metric',
+#                             filepath='weights/pretrain_' + str(i) + '_' + MODEL_NAME,
+#                            save_best_only=True,
+#                             save_weights_only=True,
+#                             mode = 'max',
+#                             verbose=1),
+#                  LRTensorBoard(log_dir='./logs/pretrain_{}'.format(str(i) + '_' +MODEL_NAME)),
+#                  ReduceLROnPlateau(monitor='val_my_iou_metric', mode = 'max',factor=0.5, patience=5, min_lr=0.0001, verbose=1)
+#            ]
+#    
+#    model = models[i]
+#    
+#    model.fit(train_x[:,:,:,:1],[train_y[:,:,:,:1]],validation_data=[val_x[:,:,:,:1],[ val_y[:,:,:,:1]]], epochs=200, batch_size=batch_size, callbacks=callbacks)
+#    model.save('folds_s/pretrain_{}.h5'.format(str(i) + '_' +MODEL_NAME))
+#
+#
+#MODEL_NAME = 'FOLDS_resnet34'
+models = []
 for i in range(5):
-    
-    train_x         =  X_train_splitted[(np.arange(5)!=i)].reshape((4*1440,128,128,3))
-    train_y         =  y_train_splitted[(np.arange(5)!=i)].reshape((4*1440,128,128,3))
-    val_x,val_y     =  X_train_splitted[i],y_train_splitted[i]
-    
-    
-    callbacks = [EarlyStopping(monitor='val_my_iou_metric_2', mode = 'max',patience=20, verbose=1),
-                 ModelCheckpoint(monitor='val_my_iou_metric_2',
-                             filepath='weights/lavaz_' + str(i) + '_' + MODEL_NAME,
-                             save_best_only=True,
-                             save_weights_only=True,
-                             mode = 'max',
-                             verbose=1),
-                  LRTensorBoard(log_dir='./logs/lavaz_{}'.format(str(i) + '_' +MODEL_NAME)),
-                  ReduceLROnPlateau(monitor='val_my_iou_metric_2', mode = 'max',factor=0.5, patience=5, min_lr=0.0001, verbose=1)
-            ]
-    
-    model = models[i]
-    
-    model.fit(train_x[:,:,:,:1],[train_y[:,:,:,:1]],validation_data=[val_x[:,:,:,:1],[ val_y[:,:,:,:1]]], epochs=200, batch_size=batch_size, callbacks=callbacks)
-    model.save('folds_s/2_bce_lavaz_{}.h5'.format(str(i) + '_' +MODEL_NAME))
-
-
-MODEL_NAME = 'FOLDS_resnet34'
-#models = []
-for i in range(5):
-#    models.append(load_model('folds_s/2_bce_lavaz_{}.h5'.format(str(i) + '_' +MODEL_NAME), custom_objects={'my_iou_metric': my_iou_metric,'weighted_bce_dice_loss':weighted_bce_dice_loss,'lovasz_loss':lovasz_loss,'my_iou_metric_2':my_iou_metric_2}))
+    models.append(load_model('folds_s/pretrain_{}.h5'.format(str(i) + '_' +MODEL_NAME)), custom_objects={'my_iou_metric': my_iou_metric,'weighted_bce_dice_loss':weighted_bce_dice_loss,'lovasz_loss':lovasz_loss,'my_iou_metric_2':my_iou_metric_2}))
     for j in range(len(models[i].layers)):
         models[i].layers[j].name='{}_{}'.format(str(i),str(j))
 
@@ -1105,8 +1106,8 @@ path_test = './test/'
 depths = pd.read_csv('depths.csv', index_col='id')
 test_ids = next(os.walk(path_test+"images"))[2]
 
-X_test = np.zeros((len(test_ids), 128, 128, 3), dtype=np.uint8)
-X_test_tta = np.zeros((len(test_ids), 128, 128, 3), dtype=np.uint8)
+X_test = np.zeros((len(test_ids), 101, 101, 3), dtype=np.uint8)
+X_test_tta = np.zeros((len(test_ids), 101, 101, 3), dtype=np.uint8)
 print('Getting and resizing test images ... ')
 for n, id_ in (enumerate(test_ids)):
     path = path_test
